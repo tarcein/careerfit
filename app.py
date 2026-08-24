@@ -13,7 +13,14 @@ from ui import dashboard, essay_planner, experiences, jd_analyzer, profile
 
 
 st.set_page_config(page_title="CareerFit AI", page_icon="🎯", layout="wide")
-init_db()
+
+
+@st.cache_resource
+def _initialize_database() -> None:
+    init_db()
+
+
+_initialize_database()
 
 
 def _finish_authentication(account_id: int) -> None:
@@ -195,6 +202,35 @@ st.markdown(
       .cf-gap-partial {border-top: 3px solid #f59e0b;}
       .cf-gap-missing {border-top: 3px solid #f97316;}
 
+      .cf-profile-overview {display: flex; align-items: center; gap: .9rem; margin: .9rem 0 .45rem; padding: 1.15rem 1.25rem;
+        border: 1px solid #c7d2fe; border-radius: .9rem; background: linear-gradient(135deg, #ffffff, #eef2ff);}
+      .cf-profile-avatar {display: grid; place-items: center; flex: 0 0 3rem; width: 3rem; height: 3rem; border-radius: .85rem;
+        background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white; font-size: 1.15rem; font-weight: 800; box-shadow: 0 7px 16px #4f46e52b;}
+      .cf-profile-identity {min-width: 0; flex: 1;}
+      .cf-profile-name {color: var(--cf-text); font-size: 1.08rem; font-weight: 780;}
+      .cf-profile-role {margin-top: .2rem; color: #64748b; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+      .cf-profile-role span {color: #a5b4fc; padding: 0 .18rem;}
+      .cf-profile-completion {display: flex; flex-direction: column; align-items: flex-end; padding-left: 1rem; border-left: 1px solid #dbe2f4;}
+      .cf-profile-completion b {color: #4338ca; font-size: 1.25rem; font-weight: 820;}
+      .cf-profile-completion span {color: #94a3b8; font-size: .68rem; font-weight: 680;}
+      .cf-form-section {display: flex; align-items: baseline; gap: .6rem; margin: 1.25rem 0 .55rem; padding-bottom: .45rem; border-bottom: 1px solid #eef2f7;}
+      .cf-form-section:first-child {margin-top: 0;}
+      .cf-form-section b {color: #334155; font-size: .88rem;}
+      .cf-form-section span {color: #94a3b8; font-size: .7rem;}
+      .cf-section-count {display: inline-grid; place-items: center; min-width: 1.5rem; height: 1.5rem; margin-left: .25rem; padding: 0 .35rem;
+        border-radius: 999px; background: #eef2ff; color: #4f46e5; font-size: .72rem; vertical-align: .12rem;}
+      .cf-material-head {display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .65rem;}
+      .cf-material-category {display: inline-flex; padding: .25rem .5rem; border: 1px solid #c7d2fe; border-radius: 999px;
+        background: #eef2ff; color: #4338ca; font-size: .68rem; font-weight: 750;}
+      .cf-material-title {margin-left: .45rem; color: var(--cf-text); font-size: 1rem; font-weight: 760;}
+      .cf-material-context {margin-bottom: .75rem; color: #64748b; font-size: .84rem; line-height: 1.6; white-space: pre-wrap;}
+      .cf-material-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-bottom: .65rem;}
+      .cf-material-grid div {padding: .65rem .72rem; border-radius: .62rem; background: #f8fafc; border: 1px solid #eef2f7;}
+      .cf-material-grid span {color: #94a3b8; font-size: .66rem; font-weight: 700;}
+      .cf-material-grid p {margin: .16rem 0 0; color: #334155; font-size: .8rem; line-height: 1.5;}
+      .cf-profile-chips {display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .45rem;}
+      .cf-profile-chip {padding: .22rem .45rem; border-radius: 999px; background: #f1f5f9; color: #64748b; font-size: .66rem; font-weight: 650;}
+
       .cf-question-hero {margin: 1rem 0 .8rem; padding: 1.2rem 1.3rem; border: 1px solid #c7d2fe; border-radius: .9rem;
         background: linear-gradient(135deg, #ffffff, #f5f3ff); box-shadow: 0 4px 16px rgba(79, 70, 229, .05);}
       .cf-question-badges {display: flex; gap: .4rem; margin-bottom: .7rem;}
@@ -253,6 +289,10 @@ st.markdown(
         .cf-app-badges {justify-content: flex-start;}
         .cf-match-head {align-items: flex-start;}
         .cf-match-breakdown {grid-template-columns: repeat(2, minmax(0, 1fr));}
+        .cf-profile-overview {align-items: flex-start; flex-wrap: wrap;}
+        .cf-profile-completion {width: 100%; align-items: flex-start; padding: .65rem 0 0; border-left: 0; border-top: 1px solid #dbe2f4;}
+        .cf-form-section {align-items: flex-start; flex-direction: column; gap: .15rem;}
+        .cf-material-grid {grid-template-columns: 1fr;}
       }
     </style>
     """,

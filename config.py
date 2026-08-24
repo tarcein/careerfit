@@ -7,6 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 DB_PATH = Path(os.getenv("CAREERFIT_DB_PATH", BASE_DIR / "data" / "careerfit.db"))
+DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL", "")
 UPLOAD_DIR = Path(os.getenv("CAREERFIT_UPLOAD_DIR", BASE_DIR / "data" / "uploads"))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini-2026-03-17")
 OPENAI_DRAFT_MODEL = os.getenv("OPENAI_DRAFT_MODEL", OPENAI_MODEL)

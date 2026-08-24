@@ -1,3 +1,5 @@
+from html import escape
+
 import streamlit as st
 
 from db import delete_personal_material, get_profile, list_personal_materials, save_personal_material, save_profile
@@ -7,25 +9,34 @@ from ui import page_header
 
 def render(user_id: int) -> None:
     page_header("Candidate profile", "내 지원 프로필", "한 번 정리한 기본 정보는 JD 분석과 자기소개서 전 과정에 재사용됩니다.")
+    if st.session_state.pop("profile_saved", False):
+        st.success("프로필을 저장했습니다.")
     profile = get_profile(user_id)
+    _render_profile_overview(profile)
 
     with st.form("profile_form"):
+        st.markdown('<div class="cf-form-section"><b>기본 정보</b><span>지원 방향을 구분하는 핵심 정보</span></div>', unsafe_allow_html=True)
+        name_col, role_col, industry_col = st.columns(3)
+        nickname = name_col.text_input("이름 또는 닉네임", profile.nickname)
+        target_role = role_col.text_input("희망 직무", profile.target_role)
+        industries = industry_col.text_input("관심 산업", profile.industries)
+
+        st.markdown('<div class="cf-form-section"><b>학력과 자격</b><span>지원 요건 판단에 활용되는 객관 정보</span></div>', unsafe_allow_html=True)
         left, right = st.columns(2)
-        with left:
-            nickname = st.text_input("이름 또는 닉네임", profile.nickname)
-            target_role = st.text_input("희망 직무", profile.target_role)
-            industries = st.text_input("관심 산업", profile.industries)
-            major = st.text_input("전공", profile.major)
-            education = st.text_area("학력", profile.education)
-            certifications = st.text_area("자격증", profile.certifications)
-        with right:
-            languages = st.text_area("어학", profile.languages)
-            technical_skills = st.text_area("기술 스택", profile.technical_skills)
-            courses = st.text_area("교육 과정", profile.courses)
-            activities = st.text_area("기타 활동", profile.activities)
-            role_description = st.text_area(
-                "희망 직무 설명", profile.role_description, help="관심 업무와 준비 방향을 간단히 작성하세요."
-            )
+        major = left.text_input("전공", profile.major)
+        education = left.text_area("학력", profile.education, height=90)
+        certifications = right.text_area("자격증", profile.certifications, height=90)
+        languages = right.text_area("어학", profile.languages, height=90)
+
+        st.markdown('<div class="cf-form-section"><b>역량과 지원 방향</b><span>JD 분석과 자기소개서에 반복 활용됩니다</span></div>', unsafe_allow_html=True)
+        left, right = st.columns(2)
+        technical_skills = left.text_area("기술 스택", profile.technical_skills, height=110)
+        courses = left.text_area("교육 과정", profile.courses, height=100)
+        activities = right.text_area("기타 활동", profile.activities, height=100)
+        role_description = right.text_area(
+            "희망 직무 설명", profile.role_description, height=110,
+            help="관심 업무와 준비 방향을 간단히 작성하세요.",
+        )
         submitted = st.form_submit_button("프로필 저장", type="primary", use_container_width=True)
 
     if submitted:
@@ -45,7 +56,8 @@ def render(user_id: int) -> None:
             ),
             user_id,
         )
-        st.success("프로필을 저장했습니다.")
+        st.session_state["profile_saved"] = True
+        st.rerun()
 
     st.divider()
     _render_personal_materials(user_id)
@@ -54,18 +66,41 @@ def render(user_id: int) -> None:
 MATERIAL_CATEGORIES = ["책", "멘토·존경 인물", "가치관", "취미", "성장 배경", "기타"]
 
 
+def _render_profile_overview(profile: ProfileData) -> None:
+    values = profile.model_dump()
+    completed = sum(bool(str(value).strip()) for value in values.values())
+    completion = round(completed / len(values) * 100)
+    nickname = profile.nickname.strip() or "내 프로필"
+    role = profile.target_role.strip() or "희망 직무를 입력해 주세요"
+    industry = profile.industries.strip() or "관심 산업 미설정"
+    st.markdown(
+        f"""<div class="cf-profile-overview"><div class="cf-profile-avatar">{escape(nickname[:1])}</div>
+        <div class="cf-profile-identity"><div class="cf-profile-name">{escape(nickname)}</div>
+        <div class="cf-profile-role">{escape(role)} <span>·</span> {escape(industry)}</div></div>
+        <div class="cf-profile-completion"><b>{completion}%</b><span>프로필 완성도</span></div></div>""",
+        unsafe_allow_html=True,
+    )
+    st.progress(completion / 100)
+
+
 def _render_personal_materials(user_id: int) -> None:
-    st.subheader("개인 소재 보관함")
-    st.caption("프로젝트가 필요 없는 책·멘토·가치관 문항에 사용할 사실을 저장합니다.")
-    with st.form("new_personal_material", clear_on_submit=True):
-        category = st.selectbox("소재 유형", MATERIAL_CATEGORIES)
-        title = st.text_input("소재 제목", placeholder="예: 팩트풀니스 / 나의 첫 팀장 / 데이터로 판단하는 태도")
-        context = st.text_area("소재와 배경", placeholder="무엇 또는 누구이며, 언제 접했는지 적어주세요.")
-        memorable_point = st.text_area("기억에 남은 내용", placeholder="인상 깊었던 말, 장면, 특징")
-        insight = st.text_area("나에게 준 영향", placeholder="생각이나 가치관이 어떻게 달라졌는지")
-        changed_action = st.text_area("행동 변화", placeholder="실제로 달라진 습관이나 행동")
-        keywords = st.text_input("키워드", placeholder="예: 데이터, 검증, 편견, 학습")
-        create = st.form_submit_button("개인 소재 저장", type="primary", use_container_width=True)
+    materials = list_personal_materials(user_id)
+    st.markdown(
+        f"""<div class="cf-section-head"><div><div class="cf-section-kicker">Personal stories</div>
+        <div class="cf-section-title">개인 소재 보관함 <span class="cf-section-count">{len(materials)}</span></div></div>
+        <div class="cf-section-copy">책·멘토·가치관처럼 프로젝트가 필요 없는 문항에 활용합니다.</div></div>""",
+        unsafe_allow_html=True,
+    )
+    with st.expander("새 개인 소재 추가", expanded=not materials):
+        with st.form("new_personal_material", clear_on_submit=True):
+            category = st.selectbox("소재 유형", MATERIAL_CATEGORIES)
+            title = st.text_input("소재 제목", placeholder="예: 팩트풀니스 / 나의 첫 팀장 / 데이터로 판단하는 태도")
+            context = st.text_area("소재와 배경", placeholder="무엇 또는 누구이며, 언제 접했는지 적어주세요.")
+            memorable_point = st.text_area("기억에 남은 내용", placeholder="인상 깊었던 말, 장면, 특징")
+            insight = st.text_area("나에게 준 영향", placeholder="생각이나 가치관이 어떻게 달라졌는지")
+            changed_action = st.text_area("행동 변화", placeholder="실제로 달라진 습관이나 행동")
+            keywords = st.text_input("키워드", placeholder="예: 데이터, 검증, 편견, 학습")
+            create = st.form_submit_button("개인 소재 저장", type="primary", use_container_width=True)
     if create:
         try:
             material_id = save_personal_material(
@@ -85,31 +120,30 @@ def _render_personal_materials(user_id: int) -> None:
         except ValueError as exc:
             st.warning(str(exc))
 
-    materials = list_personal_materials(user_id)
     if not materials:
         st.info("저장된 개인 소재가 없습니다.")
         return
     for material in materials:
-        with st.expander(f"{material['category']} · {material['title']}"):
-            with st.form(f"personal_material_{material['id']}"):
-                edit_category = st.selectbox(
-                    "소재 유형",
-                    MATERIAL_CATEGORIES,
-                    index=MATERIAL_CATEGORIES.index(material["category"])
-                    if material["category"] in MATERIAL_CATEGORIES else len(MATERIAL_CATEGORIES) - 1,
-                )
-                edit_title = st.text_input("소재 제목", material["title"])
-                edit_context = st.text_area("소재와 배경", material["context"])
-                edit_memorable = st.text_area("기억에 남은 내용", material["memorable_point"])
-                edit_insight = st.text_area("나에게 준 영향", material["insight"])
-                edit_action = st.text_area("행동 변화", material["changed_action"])
-                edit_keywords = st.text_input("키워드", material["keywords"])
-                confirm_delete = st.checkbox("이 소재와 연결된 개요·Draft도 함께 삭제")
-                left, right = st.columns(2)
-                update = left.form_submit_button("수정 저장", use_container_width=True)
-                delete = right.form_submit_button(
-                    "영구 삭제", disabled=not confirm_delete, use_container_width=True
-                )
+        with st.container(border=True):
+            _render_material_card(material)
+            with st.expander("내용 수정 또는 삭제"):
+                with st.form(f"personal_material_{material['id']}"):
+                    edit_category = st.selectbox(
+                        "소재 유형",
+                        MATERIAL_CATEGORIES,
+                        index=MATERIAL_CATEGORIES.index(material["category"])
+                        if material["category"] in MATERIAL_CATEGORIES else len(MATERIAL_CATEGORIES) - 1,
+                    )
+                    edit_title = st.text_input("소재 제목", material["title"])
+                    edit_context = st.text_area("소재와 배경", material["context"])
+                    edit_memorable = st.text_area("기억에 남은 내용", material["memorable_point"])
+                    edit_insight = st.text_area("나에게 준 영향", material["insight"])
+                    edit_action = st.text_area("행동 변화", material["changed_action"])
+                    edit_keywords = st.text_input("키워드", material["keywords"])
+                    confirm_delete = st.checkbox("이 소재와 연결된 개요·Draft도 함께 삭제")
+                    left, right = st.columns(2)
+                    update = left.form_submit_button("수정 저장", use_container_width=True)
+                    delete = right.form_submit_button("영구 삭제", use_container_width=True)
             if update:
                 save_personal_material(
                     PersonalMaterial(
@@ -127,6 +161,24 @@ def _render_personal_materials(user_id: int) -> None:
                 st.success("개인 소재를 수정했습니다.")
                 st.rerun()
             if delete:
-                delete_personal_material(material["id"], user_id)
-                st.session_state["delete_notice"] = "개인 소재와 연결된 개요·Draft를 삭제했습니다."
-                st.rerun()
+                if not confirm_delete:
+                    st.warning("연결 데이터 삭제 확인에 체크해 주세요.")
+                else:
+                    delete_personal_material(material["id"], user_id)
+                    st.session_state["delete_notice"] = "개인 소재와 연결된 개요·Draft를 삭제했습니다."
+                    st.rerun()
+
+
+def _render_material_card(material: dict) -> None:
+    keywords = [item.strip() for item in material["keywords"].replace("/", ",").split(",") if item.strip()]
+    keyword_html = "".join(f"<span class=\"cf-profile-chip\">{escape(item)}</span>" for item in keywords)
+    context = material["context"] or material["memorable_point"] or "소재 배경이 아직 입력되지 않았습니다."
+    st.markdown(
+        f"""<div class="cf-material-head"><div><span class="cf-material-category">{escape(material['category'])}</span>
+        <span class="cf-material-title">{escape(material['title'])}</span></div></div>
+        <div class="cf-material-context">{escape(context)}</div>
+        <div class="cf-material-grid"><div><span>나에게 준 영향</span><p>{escape(material['insight'] or '입력되지 않음')}</p></div>
+        <div><span>행동 변화</span><p>{escape(material['changed_action'] or '입력되지 않음')}</p></div></div>
+        <div class="cf-profile-chips">{keyword_html}</div>""",
+        unsafe_allow_html=True,
+    )

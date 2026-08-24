@@ -1,13 +1,14 @@
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import date
-from typing import Iterator
+from typing import Any, Iterator
 
-from config import BASE_DIR, DB_PATH
+from config import BASE_DIR, DATABASE_URL, DB_PATH
 from models import (
     EssayOutline,
     ExperienceData,
@@ -34,6 +35,15 @@ APPLICATION_STATUSES = (
 
 
 def init_db() -> None:
+    if DATABASE_URL:
+        with connect() as conn:
+            conn.executescript((BASE_DIR / "schema_postgres.sql").read_text(encoding="utf-8"))
+            conn.execute("INSERT OR IGNORE INTO users(id, display_name) VALUES (1, '프로필 1')")
+            conn.execute(
+                "SELECT setval(pg_get_serial_sequence('users', 'id'), "
+                "GREATEST((SELECT COALESCE(MAX(id), 1) FROM users), 1), true)"
+            )
+        return
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript((BASE_DIR / "schema.sql").read_text(encoding="utf-8"))
@@ -98,8 +108,116 @@ def _add_application_tracking_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE job_descriptions ADD COLUMN {name} {definition}")
 
 
+class _PostgresRow(dict):
+    def __getitem__(self, key: str | int) -> Any:
+        if isinstance(key, int):
+            return tuple(self.values())[key]
+        return super().__getitem__(key)
+
+
+class _PostgresCursor:
+    def __init__(self, cursor: Any):
+        self._cursor = cursor
+
+    @property
+    def rowcount(self) -> int:
+        return self._cursor.rowcount
+
+    def fetchone(self) -> _PostgresRow | None:
+        row = self._cursor.fetchone()
+        return _PostgresRow(row) if row is not None else None
+
+    def fetchall(self) -> list[_PostgresRow]:
+        return [_PostgresRow(row) for row in self._cursor.fetchall()]
+
+    def __iter__(self):
+        return (_PostgresRow(row) for row in self._cursor)
+
+
+class _PostgresConnection:
+    def __init__(self, connection: Any):
+        self._connection = connection
+
+    def execute(self, sql: str, params: Any = ()) -> _PostgresCursor:
+        return _PostgresCursor(self._connection.execute(_postgres_sql(sql), params))
+
+    def executemany(self, sql: str, params: Any) -> _PostgresCursor:
+        cursor = self._connection.cursor()
+        cursor.executemany(_postgres_sql(sql), params)
+        return _PostgresCursor(cursor)
+
+    def executescript(self, sql: str) -> None:
+        self._connection.execute(sql, prepare=False)
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+def _postgres_sql(sql: str) -> str:
+    statement = sql.strip().rstrip(";")
+    ignore_conflict = bool(re.match(r"INSERT\s+OR\s+IGNORE\s+INTO", statement, re.IGNORECASE))
+    statement = re.sub(
+        r"INSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", statement, count=1, flags=re.IGNORECASE
+    )
+    statement = statement.replace(
+        "json_extract(v.profile_json, '$.confidence')",
+        "((v.profile_json::jsonb ->> 'confidence')::double precision)",
+    ).replace(
+        "GROUP_CONCAT(DISTINCT js.skill_type)",
+        "STRING_AGG(DISTINCT js.skill_type, ',')",
+    ).replace(
+        "ROUND(AVG(js.importance), 2)",
+        "ROUND(AVG(js.importance)::numeric, 2)::double precision",
+    ).replace(
+        "SELECT js.skill_name, STRING_AGG",
+        "SELECT MIN(js.skill_name) AS skill_name, STRING_AGG",
+    ).replace(
+        "average_importance DESC, js.skill_name",
+        "average_importance DESC, skill_name",
+    )
+    statement = statement.replace("?", "%s")
+    if ignore_conflict and " ON CONFLICT " not in statement.upper():
+        statement += " ON CONFLICT DO NOTHING"
+    return statement
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.IntegrityError) or getattr(exc, "sqlstate", None) == "23505"
+
+
+def _insert_id(conn: Any, sql: str, params: Any) -> int:
+    if DATABASE_URL:
+        row = conn.execute(f"{sql.rstrip().rstrip(';')} RETURNING id", params).fetchone()
+        return int(row["id"])
+    return int(conn.execute(sql, params).lastrowid)
+
+
 @contextmanager
-def connect() -> Iterator[sqlite3.Connection]:
+def connect() -> Iterator[Any]:
+    if DATABASE_URL:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError("Supabase 연결에는 psycopg 패키지가 필요합니다.") from exc
+        raw = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+        conn = _PostgresConnection(raw)
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -156,9 +274,10 @@ def create_user(display_name: str, account_id: int | None = None) -> int:
             "SELECT 1 FROM accounts WHERE id=?", (account_id,)
         ).fetchone():
             raise ValueError("로그인 계정을 찾을 수 없습니다.")
-        user_id = conn.execute(
+        user_id = _insert_id(
+            conn,
             "INSERT INTO users(account_id, display_name) VALUES (?, ?)", (account_id, name)
-        ).lastrowid
+        )
         conn.execute("INSERT INTO profiles(user_id, nickname) VALUES (?, ?)", (user_id, name))
         return user_id
 
@@ -190,19 +309,23 @@ def register_account(email: str, password: str, display_name: str) -> int:
     with connect() as conn:
         first_account = not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone()
         try:
-            account_id = conn.execute(
+            account_id = _insert_id(
+                conn,
                 "INSERT INTO accounts(email, display_name, password_hash) VALUES (?, ?, ?)",
                 (normalized_email, name, password_hash),
-            ).lastrowid
-        except sqlite3.IntegrityError as exc:
+            )
+        except Exception as exc:
+            if not _is_unique_violation(exc):
+                raise
             raise ValueError("이미 가입된 이메일입니다.") from exc
         if first_account:
             conn.execute("UPDATE users SET account_id=? WHERE account_id IS NULL", (account_id,))
         else:
-            user_id = conn.execute(
+            user_id = _insert_id(
+                conn,
                 "INSERT INTO users(account_id, display_name) VALUES (?, ?)",
                 (account_id, "프로필 1"),
-            ).lastrowid
+            )
             conn.execute("INSERT INTO profiles(user_id, nickname) VALUES (?, '프로필 1')", (user_id,))
         return account_id
 
@@ -264,11 +387,12 @@ def save_personal_material(
     values = material.model_dump()
     with connect() as conn:
         if material_id is None:
-            return conn.execute(
+            return _insert_id(
+                conn,
                 f"INSERT INTO personal_materials(user_id, {', '.join(values)}) "
                 f"VALUES (?, {', '.join('?' for _ in values)})",
                 (user_id, *values.values()),
-            ).lastrowid
+            )
         _require_personal_material_owner(conn, material_id, user_id)
         conn.execute(
             "UPDATE personal_materials SET "
@@ -325,12 +449,13 @@ def add_uploaded_file(
         ).fetchone()
         if existing:
             return existing["id"], False
-        cursor = conn.execute(
+        uploaded_file_id = _insert_id(
+            conn,
             """INSERT INTO uploaded_files(user_id, filename, file_type, content_hash, storage_path, extracted_text)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (user_id, filename, file_type, content_hash, storage_path, extracted_text),
         )
-        return cursor.lastrowid, True
+        return uploaded_file_id, True
 
 
 def list_uploaded_files(user_id: int = 1) -> list[dict]:
@@ -358,17 +483,18 @@ def get_uploaded_files(file_ids: list[int], user_id: int = 1) -> list[dict]:
 def create_experience(experience: ExperienceData, files: list[dict], user_id: int = 1) -> int:
     payload = experience.model_dump_json()
     with connect() as conn:
-        cursor = conn.execute(
+        experience_id = _insert_id(
+            conn,
             "INSERT INTO experiences(user_id, experience_name) VALUES (?, ?)",
             (user_id, experience.experience_name or "이름 미확인 경험"),
         )
-        experience_id = cursor.lastrowid
-        version = conn.execute(
+        version = _insert_id(
+            conn,
             """INSERT INTO experience_versions
                (experience_id, version_number, profile_json, change_note, created_by)
                VALUES (?, 1, ?, 'AI 최초 추출', 'AI')""",
             (experience_id, payload),
-        ).lastrowid
+        )
         conn.execute("UPDATE experiences SET current_version_id=? WHERE id=?", (version, experience_id))
 
         named_files = {file["filename"]: file for file in files}
@@ -489,12 +615,13 @@ def add_version(
             "SELECT COALESCE(MAX(version_number), 0) + 1 FROM experience_versions WHERE experience_id=?",
             (experience_id,),
         ).fetchone()[0]
-        version_id = conn.execute(
+        version_id = _insert_id(
+            conn,
             """INSERT INTO experience_versions
                (experience_id, version_number, profile_json, change_note, created_by)
                VALUES (?, ?, ?, ?, ?)""",
             (experience_id, next_number, profile.model_dump_json(), change_note.strip(), created_by),
-        ).lastrowid
+        )
         conn.execute(
             """UPDATE experiences SET current_version_id=?, experience_name=?, review_status='User Editing',
                updated_at=CURRENT_TIMESTAMP WHERE id=?""",
@@ -566,11 +693,12 @@ def log_ai_call(
 
 def save_job_description(analysis: JDAnalysis, raw_text: str, user_id: int = 1) -> int:
     with connect() as conn:
-        jd_id = conn.execute(
+        jd_id = _insert_id(
+            conn,
             """INSERT INTO job_descriptions(user_id, company, job_title, raw_text, analysis_json)
                VALUES (?, ?, ?, ?, ?)""",
             (user_id, analysis.company, analysis.job_title, raw_text, analysis.model_dump_json()),
-        ).lastrowid
+        )
         _replace_job_skills(conn, jd_id, analysis)
         return jd_id
 
@@ -817,12 +945,13 @@ def save_essay_question(
         raise ValueError("자기소개서 문항을 입력해 주세요.")
     with connect() as conn:
         _require_jd_owner(conn, jd_id, user_id)
-        return conn.execute(
+        return _insert_id(
+            conn,
             """INSERT INTO essay_questions
                (job_description_id, question, character_limit, optional_note, analysis_json)
                VALUES (?, ?, ?, ?, ?)""",
             (jd_id, question.strip(), character_limit, optional_note.strip(), analysis.model_dump_json()),
-        ).lastrowid
+        )
 
 
 def update_essay_question(
@@ -988,12 +1117,13 @@ def save_essay_outline(
             "SELECT COALESCE(MAX(version_number), 0) + 1 FROM essay_outlines WHERE essay_question_id=?",
             (question_id,),
         ).fetchone()[0]
-        return conn.execute(
+        return _insert_id(
+            conn,
             """INSERT INTO essay_outlines
                (essay_question_id, experience_id, version_number, outline_json)
                VALUES (?, ?, ?, ?)""",
             (question_id, experience_id, version, outline.model_dump_json()),
-        ).lastrowid
+        )
 
 
 def list_essay_outlines(question_id: int, user_id: int = 1) -> list[dict]:
@@ -1123,10 +1253,11 @@ def save_essay_draft(outline_id: int, content: str, user_id: int = 1) -> int:
             raise ValueError(
                 f"초안이 글자 제한을 {len(content) - outline['character_limit']}자 초과했습니다."
             )
-        return conn.execute(
+        return _insert_id(
+            conn,
             "INSERT INTO essay_drafts(essay_outline_id, content) VALUES (?, ?)",
             (outline_id, content),
-        ).lastrowid
+        )
 
 
 def list_essay_drafts(outline_id: int, user_id: int = 1) -> list[dict]:

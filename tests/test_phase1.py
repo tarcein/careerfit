@@ -98,10 +98,13 @@ class RepositoryFlowTests(unittest.TestCase):
         self.db_path = Path(__file__).parent / ".careerfit-test.db"
         self.db_path.unlink(missing_ok=True)
         self.patch = patch.object(db, "DB_PATH", self.db_path)
+        self.url_patch = patch.object(db, "DATABASE_URL", "")
         self.patch.start()
+        self.url_patch.start()
         db.init_db()
 
     def tearDown(self):
+        self.url_patch.stop()
         self.patch.stop()
         self.db_path.unlink(missing_ok=True)
 

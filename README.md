@@ -50,6 +50,22 @@ API 키가 없으면 문서별로 근거 문장을 보존하는 로컬 초안 �
 
 업로드 제한은 파일당 200MB이며 `config.py`의 `MAX_UPLOAD_BYTES`에서 변경할 수 있습니다. 200MB를 넘기려면 Streamlit의 `server.maxUploadSize` 설정도 함께 높여야 합니다.
 
+## Supabase 영구 저장
+
+로컬에서는 기존 SQLite를 사용하고, `SUPABASE_DB_URL`이 설정된 환경에서는 Supabase PostgreSQL을 사용합니다. Render처럼 IPv4 기반인 환경에서는 Supabase 프로젝트의 `Connect`에서 **Session pooler(포트 5432)** 연결 문자열을 복사하세요.
+
+```dotenv
+SUPABASE_DB_URL=postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+```
+
+연결 문자열은 `.env`와 Render의 Environment에만 저장하고 GitHub에는 올리지 마세요. 기존 로컬 데이터를 비어 있는 Supabase 프로젝트로 한 번 복사하려면 다음 명령을 실행합니다.
+
+```powershell
+python scripts/migrate_sqlite_to_supabase.py
+```
+
+복사가 끝난 뒤 같은 `SUPABASE_DB_URL`을 Render 환경변수에 등록하고 재배포하면 회원, 프로필, 경험, JD와 자기소개서 데이터가 재배포 후에도 유지됩니다.
+
 ## 테스트
 
 ```powershell
