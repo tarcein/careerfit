@@ -1,4 +1,8 @@
 import streamlit as st
+
+if not hasattr(st, "cache"):
+    st.cache = st.cache_data
+
 from streamlit_cookies_manager import EncryptedCookieManager
 
 from config import COOKIE_SECRET

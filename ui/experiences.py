@@ -187,21 +187,18 @@ def _render_editor(user_id: int) -> None:
 
     with st.expander("경험 삭제"):
         st.warning("이 경험의 버전, 선호 설정, 매칭 결과, 자기소개서 개요와 초안이 함께 삭제됩니다. 업로드 원본 파일은 유지됩니다.")
-        confirmed = st.checkbox(
-            f"'{detail['experience_name']}' 경험을 영구 삭제합니다.",
-            key=f"delete_confirm_{detail['id']}",
-        )
-        if st.button(
-            "경험 영구 삭제",
-            disabled=not confirmed,
-            use_container_width=True,
-            key=f"delete_experience_{detail['id']}",
-        ):
-            delete_experience(detail["id"], user_id)
-            st.session_state["delete_notice"] = (
-                "경험과 연결 데이터를 삭제했습니다. 복구할 수 없으며 업로드 원본 파일은 유지됩니다."
-            )
-            st.rerun()
+        with st.form(f"delete_experience_{detail['id']}"):
+            confirmed = st.checkbox(f"'{detail['experience_name']}' 경험을 영구 삭제합니다.")
+            submitted = st.form_submit_button("경험 영구 삭제", use_container_width=True)
+        if submitted:
+            if not confirmed:
+                st.warning("영구 삭제 확인에 체크해 주세요.")
+            else:
+                delete_experience(detail["id"], user_id)
+                st.session_state["delete_notice"] = (
+                    "경험과 연결 데이터를 삭제했습니다. 복구할 수 없으며 업로드 원본 파일은 유지됩니다."
+                )
+                st.rerun()
 
 
 def _render_correction_form(detail: dict, user_id: int) -> None:
