@@ -1,9 +1,12 @@
+import atexit
 import hashlib
 import hmac
 import json
 import re
 import secrets
 import sqlite3
+import threading
+import time
 from contextlib import contextmanager
 from datetime import date
 from typing import Any, Iterator
@@ -32,6 +35,18 @@ APPLICATION_STATUSES = (
     "불합격",
     "보류",
 )
+
+_POSTGRES_POOL = None
+_POSTGRES_POOL_URL = ""
+_POSTGRES_POOL_LOCK = threading.Lock()
+
+
+def _close_postgres_pool() -> None:
+    if _POSTGRES_POOL is not None and not _POSTGRES_POOL.closed:
+        _POSTGRES_POOL.close()
+
+
+atexit.register(_close_postgres_pool)
 
 
 def init_db() -> None:
@@ -191,6 +206,31 @@ def _is_unique_violation(exc: Exception) -> bool:
     return isinstance(exc, sqlite3.IntegrityError) or getattr(exc, "sqlstate", None) == "23505"
 
 
+def _get_postgres_pool():
+    global _POSTGRES_POOL, _POSTGRES_POOL_URL
+    if _POSTGRES_POOL is not None and _POSTGRES_POOL_URL == DATABASE_URL:
+        return _POSTGRES_POOL
+    with _POSTGRES_POOL_LOCK:
+        if _POSTGRES_POOL is not None and _POSTGRES_POOL_URL != DATABASE_URL:
+            _POSTGRES_POOL.close()
+            _POSTGRES_POOL = None
+        if _POSTGRES_POOL is None:
+            from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
+
+            _POSTGRES_POOL = ConnectionPool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=5,
+                max_idle=300,
+                timeout=15,
+                kwargs={"row_factory": dict_row, "prepare_threshold": None},
+                open=True,
+            )
+            _POSTGRES_POOL_URL = DATABASE_URL
+    return _POSTGRES_POOL
+
+
 def _insert_id(conn: Any, sql: str, params: Any) -> int:
     if DATABASE_URL:
         row = conn.execute(f"{sql.rstrip().rstrip(';')} RETURNING id", params).fetchone()
@@ -202,20 +242,17 @@ def _insert_id(conn: Any, sql: str, params: Any) -> int:
 def connect() -> Iterator[Any]:
     if DATABASE_URL:
         try:
-            import psycopg
-            from psycopg.rows import dict_row
+            pool = _get_postgres_pool()
         except ImportError as exc:
-            raise RuntimeError("Supabase 연결에는 psycopg 패키지가 필요합니다.") from exc
-        raw = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
-        conn = _PostgresConnection(raw)
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+            raise RuntimeError("Supabase 연결에는 psycopg pool 패키지가 필요합니다.") from exc
+        with pool.connection() as raw:
+            conn = _PostgresConnection(raw)
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return
 
     conn = sqlite3.connect(DB_PATH)
@@ -337,6 +374,44 @@ def authenticate_account(email: str, password: str) -> dict | None:
     if not row or not _verify_password(password, row["password_hash"]):
         return None
     return {key: row[key] for key in ("id", "email", "display_name", "created_at")}
+
+
+def create_auth_session(account_id: int, ttl_seconds: int = 30 * 24 * 60 * 60) -> str:
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now = int(time.time())
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM accounts WHERE id=?", (account_id,)).fetchone():
+            raise ValueError("로그인 계정을 찾을 수 없습니다.")
+        conn.execute("DELETE FROM auth_sessions WHERE expires_at<=?", (now,))
+        conn.execute(
+            "INSERT INTO auth_sessions(account_id, token_hash, expires_at) VALUES (?, ?, ?)",
+            (account_id, token_hash, now + ttl_seconds),
+        )
+    return token
+
+
+def authenticate_session(token: str | None) -> dict | None:
+    if not token or len(token) > 128:
+        return None
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now = int(time.time())
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT a.id, a.email, a.display_name, a.created_at
+               FROM auth_sessions s JOIN accounts a ON a.id=s.account_id
+               WHERE s.token_hash=? AND s.expires_at>?""",
+            (token_hash, now),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def revoke_auth_session(token: str | None) -> None:
+    if not token:
+        return
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    with connect() as conn:
+        conn.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
 
 
 def _validate_email(email: str) -> str:

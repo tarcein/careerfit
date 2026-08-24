@@ -121,6 +121,12 @@ class RepositoryFlowTests(unittest.TestCase):
         self.assertEqual(len(second_profiles), 1)
         self.assertNotIn(second_profiles[0]["id"], [item["id"] for item in db.list_users(first_account_id)])
 
+        token = db.create_auth_session(first_account_id)
+        self.assertEqual(db.authenticate_session(token)["id"], first_account_id)
+        db.revoke_auth_session(token)
+        self.assertIsNone(db.authenticate_session(token))
+        self.assertIsNone(db.authenticate_session(db.create_auth_session(first_account_id, -1)))
+
     def test_profile_experience_version_and_approval(self):
         db.save_profile(ProfileData(nickname="테스터", target_role="Data Analyst"))
         self.assertEqual(db.get_profile().nickname, "테스터")

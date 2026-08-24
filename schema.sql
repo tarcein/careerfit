@@ -8,6 +8,14 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id INTEGER PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
@@ -255,3 +263,4 @@ CREATE INDEX IF NOT EXISTS idx_essay_outlines_question ON essay_outlines(essay_q
 CREATE INDEX IF NOT EXISTS idx_essay_drafts_outline ON essay_drafts(essay_outline_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_fact_checks_draft ON fact_check_results(essay_draft_id);
 CREATE INDEX IF NOT EXISTS idx_recommendation_ground_truth_jd ON recommendation_ground_truth(job_description_id, rank);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_account ON auth_sessions(account_id, expires_at);

@@ -1,13 +1,18 @@
 import streamlit as st
+from streamlit_cookies_manager import EncryptedCookieManager
 
+from config import COOKIE_SECRET
 from db import (
     authenticate_account,
+    authenticate_session,
+    create_auth_session,
     create_user,
     get_account,
     has_accounts,
     init_db,
     list_users,
     register_account,
+    revoke_auth_session,
 )
 from ui import dashboard, essay_planner, experiences, jd_analyzer, profile
 
@@ -22,9 +27,39 @@ def _initialize_database() -> None:
 
 _initialize_database()
 
+AUTH_COOKIE = "session"
+cookies = EncryptedCookieManager(
+    prefix="careerfit/",
+    password=COOKIE_SECRET,
+)
+if not cookies.ready():
+    st.stop()
+
+
+def _restore_authentication() -> None:
+    if st.session_state.get("account_id"):
+        return
+    token = cookies.get(AUTH_COOKIE)
+    account = authenticate_session(token)
+    if account:
+        st.session_state["account_id"] = account["id"]
+        st.session_state["account"] = account
+        st.session_state["auth_token"] = token
+    elif token:
+        del cookies[AUTH_COOKIE]
+        cookies.save()
+
+
+_restore_authentication()
+
 
 def _finish_authentication(account_id: int) -> None:
+    token = create_auth_session(account_id)
+    cookies[AUTH_COOKIE] = token
+    cookies.save()
     st.session_state["account_id"] = account_id
+    st.session_state["account"] = get_account(account_id)
+    st.session_state["auth_token"] = token
     st.session_state.pop("active_user_id", None)
     st.rerun()
 
@@ -299,7 +334,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-account = get_account(st.session_state.get("account_id"))
+account = st.session_state.get("account")
+if account is None:
+    account = get_account(st.session_state.get("account_id"))
+    if account is not None:
+        st.session_state["account"] = account
 if account is None:
     _render_auth()
     st.stop()
@@ -335,7 +374,13 @@ with st.sidebar:
     )
     st.caption(f"{account['display_name']} · {account['email']}")
     if st.button("로그아웃", use_container_width=True):
+        revoke_auth_session(st.session_state.get("auth_token") or cookies.get(AUTH_COOKIE))
+        if AUTH_COOKIE in cookies:
+            del cookies[AUTH_COOKIE]
+            cookies.save()
         st.session_state.pop("account_id", None)
+        st.session_state.pop("account", None)
+        st.session_state.pop("auth_token", None)
         st.session_state.pop("active_user_id", None)
         st.rerun()
     st.divider()
