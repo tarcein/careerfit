@@ -84,7 +84,7 @@ def _render_auth() -> None:
             with st.form("initial_account"):
                 name = st.text_input("이름", placeholder="예: 홍길동")
                 email = st.text_input("이메일", placeholder="name@example.com")
-                password = st.text_input("비밀번호", type="password", help="8자 이상")
+                password = st.text_input("비밀번호 (6자 이상)", type="password")
                 password_confirm = st.text_input("비밀번호 확인", type="password")
                 submitted = st.form_submit_button("첫 계정 만들기", type="primary", use_container_width=True)
             if submitted:
@@ -113,7 +113,7 @@ def _render_auth() -> None:
             with st.form("signup"):
                 name = st.text_input("이름", key="signup_name")
                 email = st.text_input("이메일", key="signup_email")
-                password = st.text_input("비밀번호", type="password", help="8자 이상", key="signup_password")
+                password = st.text_input("비밀번호 (6자 이상)", type="password", key="signup_password")
                 password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_confirm")
                 submitted = st.form_submit_button("회원가입", type="primary", use_container_width=True)
             if submitted:

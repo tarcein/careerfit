@@ -422,8 +422,8 @@ def _validate_email(email: str) -> str:
 
 
 def _validate_password(password: str) -> None:
-    if len(password) < 8:
-        raise ValueError("비밀번호는 8자 이상이어야 합니다.")
+    if len(password) < 6:
+        raise ValueError("비밀번호는 6자 이상이어야 합니다.")
     if len(password) > 128:
         raise ValueError("비밀번호는 128자 이하여야 합니다.")
 

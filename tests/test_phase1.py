@@ -121,6 +121,11 @@ class RepositoryFlowTests(unittest.TestCase):
         self.assertEqual(len(second_profiles), 1)
         self.assertNotIn(second_profiles[0]["id"], [item["id"] for item in db.list_users(first_account_id)])
 
+        with self.assertRaises(ValueError):
+            db.register_account("short@example.com", "12345", "짧은 비밀번호")
+        minimum_account_id = db.register_account("minimum@example.com", "123456", "최소 비밀번호")
+        self.assertEqual(db.authenticate_account("minimum@example.com", "123456")["id"], minimum_account_id)
+
         token = db.create_auth_session(first_account_id)
         self.assertEqual(db.authenticate_session(token)["id"], first_account_id)
         db.revoke_auth_session(token)
