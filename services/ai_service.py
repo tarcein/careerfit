@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -71,6 +72,53 @@ TECHNICAL_SKILLS = {
     "azure", "git", "docker", "kubernetes", "machine learning", "머신러닝", "통계", "데이터 분석", "데이터 시각화",
 }
 BEHAVIORAL_SKILLS = {"문제 해결", "커뮤니케이션", "협업", "프로젝트 관리"}
+
+
+def extract_profile_from_resume(
+    resume_text: str, current: ProfileData, user_id: int = 1
+) -> tuple[ProfileData, bool]:
+    if not resume_text.strip():
+        raise ValueError("이력서에서 추출된 텍스트가 없습니다.")
+    if os.getenv("OPENAI_API_KEY"):
+        prompt = f"""다음 이력서에서 지원자 프로필을 추출하라.
+원문에 명시된 정보만 사용하고 추측하거나 새로운 사실을 만들지 마라.
+여러 항목은 줄바꿈으로 구분하고, 찾을 수 없는 필드는 빈 문자열로 반환하라.
+
+필드 설명:
+- nickname: 지원자 이름
+- target_role: 희망·지원 직무
+- industries: 희망·관심 산업
+- major: 전공
+- education: 학교, 학위, 재학·졸업 정보
+- certifications: 자격증
+- languages: 외국어와 어학 점수
+- technical_skills: 기술, 도구, 프로그래밍 언어
+- courses: 교육, 부트캠프, 수료 과정
+- activities: 인턴, 동아리, 대외활동, 봉사
+- role_description: 이력서에 명시된 직무 요약 또는 지원 방향
+
+이력서:
+{resume_text[:MAX_AI_INPUT_CHARS]}"""
+        extracted = _parsed_response(
+            "resume_profile_extraction",
+            "이력서의 명시적 사실만 구조화하는 채용 프로필 추출기다.",
+            prompt,
+            ProfileData,
+            user_id,
+        )
+        used_ai = True
+    else:
+        extracted = _local_resume_profile(resume_text)
+        used_ai = False
+
+    current_values = current.model_dump()
+    extracted_values = extracted.model_dump()
+    return ProfileData.model_validate(
+        {
+            field: current_values[field] if current_values[field].strip() else extracted_values[field].strip()
+            for field in ProfileData.model_fields
+        }
+    ), used_ai
 
 
 def extract_experiences(
@@ -402,6 +450,53 @@ def _local_evidence_draft(file: dict) -> ExperienceData:
         ownership_notes="AI 미사용 초안: 개인 기여와 팀 성과를 사용자가 확인해야 합니다.",
         confidence=0.2,
     )
+
+
+def _local_resume_profile(resume_text: str) -> ProfileData:
+    lines = [line.strip(" -•\t") for line in resume_text.splitlines() if line.strip()]
+    lowered = resume_text.casefold()
+    name = next(
+        (
+            line
+            for line in lines[:8]
+            if 2 <= len(line) <= 30
+            and not any(word in line.casefold() for word in ("이력서", "resume", "curriculum", "profile"))
+            and not re.search(r"[@:/|]|\d{3,}", line)
+        ),
+        "",
+    )
+    skills = [name for name in KNOWN_SKILLS if name.casefold() in lowered and name.casefold() in TECHNICAL_SKILLS]
+    return ProfileData(
+        nickname=name,
+        target_role=_labeled_resume_value(lines, ("희망 직무", "지원 직무", "목표 직무", "position")),
+        industries=_labeled_resume_value(lines, ("희망 산업", "관심 산업", "산업 분야", "industry")),
+        major="\n".join(_resume_lines(lines, ("전공", "학과", "학부"))),
+        education="\n".join(_resume_lines(lines, ("대학교", "대학", "학사", "석사", "박사", "재학", "졸업"))),
+        certifications="\n".join(
+            _resume_lines(lines, ("자격증", "자격", "기사", "산업기사", "certificate", "certification"))
+        ),
+        languages="\n".join(
+            _resume_lines(lines, ("어학", "toeic", "toefl", "opic", "ielts", "hsk", "jlpt", "영어", "일본어", "중국어"))
+        ),
+        technical_skills=", ".join(skills),
+        courses="\n".join(_resume_lines(lines, ("교육", "수료", "과정", "부트캠프", "bootcamp"))),
+        activities="\n".join(_resume_lines(lines, ("인턴", "동아리", "대외활동", "봉사", "활동"))),
+        role_description=_labeled_resume_value(lines, ("경력 요약", "직무 요약", "소개", "summary", "objective")),
+    )
+
+
+def _resume_lines(lines: list[str], markers: tuple[str, ...], limit: int = 8) -> list[str]:
+    matches = [line for line in lines if any(marker in line.casefold() for marker in markers)]
+    return list(dict.fromkeys(matches))[:limit]
+
+
+def _labeled_resume_value(lines: list[str], markers: tuple[str, ...]) -> str:
+    for line in lines:
+        if not any(marker in line.casefold() for marker in markers):
+            continue
+        parts = re.split(r"\s*[:：|]\s*", line, maxsplit=1)
+        return parts[1].strip() if len(parts) == 2 else line
+    return ""
 
 
 def _local_jd_analysis(company: str, job_title: str, raw_text: str) -> JDAnalysis:

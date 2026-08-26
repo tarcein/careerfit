@@ -21,6 +21,7 @@ from services.ai_service import (
     analyze_jd,
     analyze_question,
     extract_experiences,
+    extract_profile_from_resume,
     generate_essay_draft,
     generate_essay_outline,
     revise_essay_draft,
@@ -53,6 +54,28 @@ class DocumentParserTests(unittest.TestCase):
         self.assertFalse(used_ai)
         self.assertEqual(experiences[0].evidence[0].quote, "고객 데이터를 분석했다.")
         self.assertEqual(experiences[0].ownership_notes.startswith("AI 미사용 초안"), True)
+
+    def test_resume_fills_only_empty_profile_fields(self):
+        resume = """홍길동
+희망 직무: 데이터 분석가
+서울대학교 통계학과 학사 졸업
+전공: 통계학
+SQLD 자격증
+TOEIC 900
+Python, SQL, Tableau
+데이터 분석 부트캠프 수료
+데이터 동아리 활동"""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            profile, used_ai = extract_profile_from_resume(
+                resume, ProfileData(target_role="기존 희망 직무")
+            )
+        self.assertFalse(used_ai)
+        self.assertEqual(profile.nickname, "홍길동")
+        self.assertEqual(profile.target_role, "기존 희망 직무")
+        self.assertIn("통계학", profile.major)
+        self.assertIn("SQLD", profile.certifications)
+        self.assertIn("TOEIC", profile.languages)
+        self.assertIn("Python", profile.technical_skills)
 
     def test_short_ai_draft_is_retried_to_reach_minimum_length(self):
         context = {

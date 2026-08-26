@@ -2,8 +2,11 @@ from html import escape
 
 import streamlit as st
 
+from config import SUPPORTED_EXTENSIONS
 from db import delete_personal_material, get_profile, list_personal_materials, save_personal_material, save_profile
 from models import PersonalMaterial, ProfileData
+from services.ai_service import extract_profile_from_resume
+from services.document_parser import DocumentError, parse_document
 from ui import page_header
 
 
@@ -11,8 +14,11 @@ def render(user_id: int) -> None:
     page_header("Candidate profile", "내 지원 프로필", "한 번 정리한 기본 정보는 JD 분석과 자기소개서 전 과정에 재사용됩니다.")
     if st.session_state.pop("profile_saved", False):
         st.success("프로필을 저장했습니다.")
+    if notice := st.session_state.pop("resume_profile_notice", None):
+        st.success(notice)
     profile = get_profile(user_id)
     _render_profile_overview(profile)
+    _render_resume_import(profile, user_id)
 
     with st.form("profile_form"):
         st.markdown('<div class="cf-form-section"><b>기본 정보</b><span>지원 방향을 구분하는 핵심 정보</span></div>', unsafe_allow_html=True)
@@ -61,6 +67,45 @@ def render(user_id: int) -> None:
 
     st.divider()
     _render_personal_materials(user_id)
+
+
+def _render_resume_import(profile: ProfileData, user_id: int) -> None:
+    with st.expander("이력서로 프로필 자동 채우기"):
+        st.caption("현재 비어 있는 프로필 항목만 채웁니다. 추출 결과는 저장 후 직접 검토·수정할 수 있습니다.")
+        resume = st.file_uploader(
+            "이력서 파일",
+            type=[suffix.lstrip(".") for suffix in sorted(SUPPORTED_EXTENSIONS)],
+            key=f"profile_resume_{user_id}",
+        )
+        if st.button(
+            "이력서 분석하고 빈 항목 채우기",
+            type="primary",
+            disabled=resume is None,
+            use_container_width=True,
+            key=f"profile_resume_submit_{user_id}",
+        ):
+            try:
+                with st.spinner("이력서에서 프로필 정보를 찾고 있습니다..."):
+                    text = parse_document(resume.name, resume.getvalue())
+                    imported, used_ai = extract_profile_from_resume(text, profile, user_id)
+                filled = [
+                    field
+                    for field in ProfileData.model_fields
+                    if not getattr(profile, field).strip() and getattr(imported, field).strip()
+                ]
+                if not filled:
+                    st.warning("새로 채울 수 있는 프로필 정보를 찾지 못했습니다.")
+                else:
+                    save_profile(imported, user_id)
+                    mode = "AI" if used_ai else "로컬 규칙"
+                    st.session_state["resume_profile_notice"] = (
+                        f"{mode}으로 프로필 {len(filled)}개 항목을 채웠습니다. 내용을 확인해 주세요."
+                    )
+                    st.rerun()
+            except (DocumentError, ValueError) as exc:
+                st.warning(str(exc))
+            except Exception as exc:
+                st.error(f"이력서 분석에 실패했습니다: {exc}")
 
 
 MATERIAL_CATEGORIES = ["책", "멘토·존경 인물", "가치관", "취미", "성장 배경", "기타"]
