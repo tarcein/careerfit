@@ -112,7 +112,7 @@ def _render_application_folders(user_id: int) -> None:
                 unsafe_allow_html=True,
             )
             if folder["latest_draft_at"]:
-                st.caption("최근 Draft: " + folder["latest_draft_at"])
+                st.caption(f"최근 Draft: {folder['latest_draft_at']}")
             st.markdown(
                 f'<div class="cf-app-memo">{escape(folder["application_memo"])}</div>'
                 if folder["application_memo"]
@@ -147,4 +147,3 @@ def _render_application_folders(user_id: int) -> None:
                     )
                     st.success("지원 현황을 저장했습니다.")
                     st.rerun()
-
