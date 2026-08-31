@@ -1,10 +1,16 @@
 import unittest
+from pathlib import Path
 
 import db
 from scripts.migrate_sqlite_to_supabase import _postgres_value
 
 
 class PostgresCompatibilityTests(unittest.TestCase):
+    def test_application_status_schema_migrates_legacy_default(self):
+        schema = (Path(__file__).parents[1] / "schema_postgres.sql").read_text(encoding="utf-8")
+        self.assertIn("application_status TEXT NOT NULL DEFAULT '관심'", schema)
+        self.assertIn("WHERE application_status = '검토 중'", schema)
+
     def test_translates_sqlite_placeholders_and_ignore(self):
         translated = db._postgres_sql(
             "INSERT OR IGNORE INTO embeddings(user_id, model) VALUES (?, ?)"
